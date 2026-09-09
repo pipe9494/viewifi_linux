@@ -34,6 +34,8 @@ DEFAULTS = {
     "device_name": "Linux Host",
     "device_id": "",
     "last_command_check_ms": 0,
+    "web_port": 8080,
+    "web_password": "",
 }
 
 

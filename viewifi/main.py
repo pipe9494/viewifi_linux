@@ -33,13 +33,15 @@ COOLDOWN_MS = 5_000
 
 
 class ViewifiHost:
-    def __init__(self, cfg, sim=False, iface=None):
+    def __init__(self, cfg, sim=False, iface=None, log=print):
+        self.log = log
         self.cfg = cfg
         self.engine = MotionEngine(sensitivity=float(cfg["sensitivity"]))
         self.bot = TelegramBot(cfg["telegram_bot_token"], cfg["telegram_chat_id"])
         self.store = EventStore(config_mod.DB_PATH)
         self.sim = sim
         self.sampler = None if sim else WifiSampler(iface)
+        self.source_name = "simulación" if sim else getattr(self.sampler, "iface", None) or "wifi"
         self.supabase = SupabaseBridge(
             cfg["supabase_url"], cfg["supabase_anon_key"],
             cfg["supabase_email"], cfg["supabase_password"],
@@ -86,7 +88,7 @@ class ViewifiHost:
 
         classification = "Connectivity" if connectivity else self.engine.classify()
         self.store.add(level, rssi, variance, classification, zone, notified=True)
-        print(f"[{datetime.now():%H:%M:%S}] ALARM {level} rssi={rssi} var={variance:.2f} {classification}")
+        self.log(f"[{datetime.now():%H:%M:%S}] ALARM {level} rssi={rssi} var={variance:.2f} {classification}")
 
         if not self.bot.enabled:
             return
@@ -107,7 +109,7 @@ class ViewifiHost:
                     self.engine.sigma or 1.0, self.engine.sensitivity, level)
                 self.bot.send_photo(png, caption)
             except Exception as e:
-                print(f"[alarm] snapshot failed: {e}")
+                self.log(f"[alarm] snapshot failed: {e}")
                 self.bot.send_message(caption)
             # optional real-world evidence
             if self.cfg["evidence_photo"]:
@@ -136,13 +138,13 @@ class ViewifiHost:
         return self.sampler.sample()
 
     def run(self):
-        print("Viewifi Linux host starting…")
-        print(f"  zone={self.cfg['zone']} device={self.cfg['device_name']} ({self.cfg['device_id'][:8]})")
-        print(f"  sensitivity={self.engine.sensitivity} interval={self.cfg['sample_interval_ms']}ms")
+        self.log("Viewifi Linux host starting…")
+        self.log(f"  zone={self.cfg['zone']} device={self.cfg['device_name']} ({self.cfg['device_id'][:8]})")
+        self.log(f"  sensitivity={self.engine.sensitivity} interval={self.cfg['sample_interval_ms']}ms")
         if self.sim:
-            print("  SIMULATION MODE — synthetic RSSI, no WiFi hardware used")
+            self.log("  SIMULATION MODE — synthetic RSSI, no WiFi hardware used")
         elif not self.sampler.iface:
-            print("  WARNING: no WiFi interface found — install `iw` and check the adapter")
+            self.log("  WARNING: no WiFi interface found — install `iw` and check the adapter")
         if self.bot.enabled:
             self.bot.send_message(
                 f"🟢 VIEWIFI host online: {self.cfg['device_name']} ({self.cfg['zone']})\n"
@@ -150,11 +152,19 @@ class ViewifiHost:
             )
 
         self.engine.start_calibration()
-        print("Calibrating for 30s — keep the room still…")
+        self.log("Calibrating for 30s — keep the room still…")
 
         interval = max(int(self.cfg["sample_interval_ms"]), 200) / 1000.0
         bg = threading.Thread(target=self._background_loop, daemon=True)
         bg.start()
+
+        port = int(self.cfg.get("web_port") or 8080)
+        try:
+            from .webserver import start_dashboard
+            start_dashboard(self, port)
+            self.log(f"  Panel web: http://0.0.0.0:{port}  (desde otro equipo: http://<ip-de-este-equipo>:{port})")
+        except Exception as e:
+            self.log(f"  WARNING: panel web no disponible en puerto {port}: {e}")
 
         while self.running:
             rssi = self._sample()
@@ -174,7 +184,7 @@ class ViewifiHost:
             prev_state = self.engine.state
             level = self.engine.process(rssi, ts)
             if prev_state != self.engine.state and self.engine.state == "MONITORING":
-                print(f"Calibration done: baseline={self.engine.baseline:.1f} dBm sigma={self.engine.sigma:.2f}")
+                self.log(f"Calibration done: baseline={self.engine.baseline:.1f} dBm sigma={self.engine.sigma:.2f}")
                 if self.bot.enabled:
                     self.bot.send_message(
                         f"✅ VIEWIFI calibrated — monitoring {self.cfg['zone']}\n"
@@ -201,7 +211,7 @@ class ViewifiHost:
             try:
                 self._tick()
             except Exception as e:
-                print(f"[background] {e}")
+                self.log(f"[background] {e}")
             time.sleep(5)
 
     def _tick(self):
@@ -275,7 +285,7 @@ class ViewifiHost:
             )
 
     def _handle_command(self, cmd):
-        print(f"[command] {cmd}")
+        self.log(f"[command] {cmd}")
         if cmd == "/arm":
             self.engine.arm()
             self.bot.send_message(f"🔒 {self.cfg['device_name']} armed")
@@ -299,6 +309,11 @@ class ViewifiHost:
                 "/status — state and stats\n/arm — arm monitoring\n"
                 "/disarm — disarm\n/photo — current signal chart"
             )
+
+    def apply_config(self):
+        """Re-aplica la configuración editada desde el panel web."""
+        self.bot = TelegramBot(self.cfg["telegram_bot_token"], self.cfg["telegram_chat_id"])
+        self.engine.sensitivity = float(self.cfg["sensitivity"])
 
     def stop(self):
         self.running = False
