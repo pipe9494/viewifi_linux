@@ -1,0 +1,18 @@
+[Unit]
+Description=Viewifi Linux host — WiFi motion detection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/usr/bin/python3 -m viewifi.main
+WorkingDirectory=/opt/viewifi
+Restart=always
+RestartSec=5
+# Gentle resource limits for small boards (Pi Zero)
+MemoryMax=256M
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

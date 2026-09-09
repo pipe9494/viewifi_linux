@@ -1,0 +1,21 @@
+{
+  "zone": "Home",
+  "device_name": "Linux Host",
+  "sensitivity": 2.5,
+  "sample_interval_ms": 250,
+  "surveillance": true,
+  "heartbeat_minutes": 60,
+  "digest_enabled": false,
+  "digest_hour": 8,
+  "protected_schedule_enabled": false,
+  "protected_start_min": 0,
+  "protected_end_min": 360,
+  "evidence_photo": false,
+  "evidence_audio": false,
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
+  "supabase_url": "",
+  "supabase_anon_key": "",
+  "supabase_email": "",
+  "supabase_password": ""
+}

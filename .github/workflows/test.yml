@@ -1,0 +1,21 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile all modules
+        run: python3 -m py_compile viewifi/*.py
+
+      - name: Engine self-test (7 scenarios)
+        run: python3 -m viewifi.engine
+
+      - name: Smoke test — 45s simulation run
+        run: timeout 45 python3 -m viewifi.main --sim || code=$?; [ "${code:-0}" = "124" ] || [ "${code:-0}" = "0" ]
+        timeout-minutes: 2
