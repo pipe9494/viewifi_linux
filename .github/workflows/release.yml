@@ -1,11 +1,37 @@
 name: release
 
+# Compila el host de Linux para x86_64 y ARM64 y sube los dos ejecutables
+# a una release del repositorio PÚBLICO de descargas.
+#
+# Por qué está escrito así:
+#
+#  1. Los ejecutables se compilan dentro de un contenedor debian:bullseye
+#     (glibc 2.31). Un binario compilado sobre el Ubuntu del runner (glibc
+#     2.39) falla con "GLIBC_2.38 not found" en Raspberry Pi OS bookworm y en
+#     Debian 12, que es justo donde va a correr. Compilar contra la glibc más
+#     antigua y ejecutar sobre las nuevas sí funciona; al revés no.
+#
+#  2. Publica en pipe9494/viewifi-releases, no en este repositorio. El sitio
+#     enlaza a viewifi-releases y este repo va a ser privado: una release aquí
+#     daría 404 a cualquiera que no haya iniciado sesión.
+#
+#  3. Usa `gh release upload --clobber` sobre un tag que ya existe, en vez de
+#     `gh release create`. Todos los archivos (imagen del kit, ejecutables y
+#     APK) tienen que vivir en la MISMA release, porque la web enlaza a
+#     /releases/latest/download/... y "latest" es una sola release.
+
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de la release destino en viewifi-releases"
+        required: true
+        default: "v1.0.0"
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -13,46 +39,75 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             arch: x86_64
           - os: ubuntu-24.04-arm
             arch: arm64
     runs-on: ${{ matrix.os }}
+    container: debian:bullseye
     steps:
+      - name: Preparar el contenedor
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3 python3-pip python3-dev binutils curl ca-certificates git
+
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Build executable
+
+      - name: Compilar el ejecutable
         run: |
-          pip install pyinstaller
-          pyinstaller --onefile --name viewifi-host-linux-${{ matrix.arch }} run.py
-      - name: Boot test (simulation mode)
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pyinstaller
+          python3 -m PyInstaller --onefile --strip \
+            --name viewifi-host-linux-${{ matrix.arch }} run.py
+
+      - name: Comprobar que arranca (modo simulación)
         run: |
-          timeout 25 ./dist/viewifi-host-linux-${{ matrix.arch }} --sim &
+          chmod +x dist/viewifi-host-linux-${{ matrix.arch }}
+          ./dist/viewifi-host-linux-${{ matrix.arch }} --help
+          ./dist/viewifi-host-linux-${{ matrix.arch }} --sim &
           PID=$!
-          sleep 6
-          curl -sf http://127.0.0.1:8080/api/status | grep -q device_name
-          curl -sf http://127.0.0.1:8080/ | grep -qi viewifi
-          kill $PID || true
+          sleep 10
+          curl -sf --max-time 5 http://127.0.0.1:8080/api/status | grep -q device_name
+          curl -sf --max-time 5 http://127.0.0.1:8080/ | grep -qi viewifi
+          kill "$PID" || true
+
+      - name: Registrar la glibc mínima requerida
+        run: |
+          echo "Compilado en: $(ldd --version | head -1)"
+          objdump -T dist/viewifi-host-linux-${{ matrix.arch }} 2>/dev/null \
+            | grep -oE 'GLIBC_[0-9.]+' | sort -Vu | tail -1 \
+            || echo "sin símbolos versionados"
+
       - uses: actions/upload-artifact@v4
         with:
           name: bin-${{ matrix.arch }}
           path: dist/viewifi-host-linux-${{ matrix.arch }}
+          if-no-files-found: error
 
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: bin-*
           merge-multiple: true
-      - name: Publish GitHub release
+
+      - name: Subir a la release de viewifi-releases
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Token personal con permiso de escritura sobre viewifi-releases.
+          # El GITHUB_TOKEN por defecto solo sirve para ESTE repositorio.
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Falta el secret RELEASES_TOKEN."
+            echo "Créalo en Settings → Secrets and variables → Actions."
+            exit 1
+          fi
           chmod +x viewifi-host-linux-*
-          gh release create "${GITHUB_REF_NAME}" viewifi-host-linux-* \
-            --title "Viewifi Host ${GITHUB_REF_NAME}" --generate-notes
+          ls -la viewifi-host-linux-*
+          gh release upload "$TAG" viewifi-host-linux-* \
+            --clobber --repo pipe9494/viewifi-releases
+          echo "Subidos a la release $TAG de pipe9494/viewifi-releases."
