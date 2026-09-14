@@ -48,6 +48,9 @@ jobs:
     steps:
       - name: Preparar el contenedor
         run: |
+          sed -i -e 's|deb.debian.org/debian-security|archive.debian.org/debian-security|g' \
+            -e 's|deb.debian.org/debian|archive.debian.org/debian|g' /etc/apt/sources.list
+          printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid
           apt-get update
           apt-get install -y --no-install-recommends \
             python3 python3-pip python3-dev binutils curl ca-certificates git
