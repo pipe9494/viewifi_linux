@@ -1,3 +1,77 @@
+# Prompt para el agente de GitHub Copilot
+
+Abre `github.com/pipe9494/viewifi_linux`, entra en **Copilot → Agents** (o
+asigna un issue a Copilot) y pega el bloque de abajo tal cual.
+
+---
+
+Reemplaza por completo el archivo `.github/workflows/release.yml` de este
+repositorio con el contenido exacto que incluyo al final de este mensaje, y
+ábreme un pull request con el cambio.
+
+## Contexto
+
+Este repositorio contiene el host de Linux de Viewifi: una aplicación en
+Python que usa únicamente la biblioteca estándar, cuyo punto de entrada es
+`run.py`. De ella se compilan dos ejecutables con PyInstaller,
+`viewifi-host-linux-x86_64` y `viewifi-host-linux-arm64`, que se publican
+como adjuntos de una release para que la web `viewifi.tech` pueda enlazarlos.
+
+El workflow actual tiene dos defectos que hacen que esos dos enlaces de
+descarga devuelvan 404 hoy mismo. El contenido nuevo que te doy ya los
+corrige. Necesito que lo apliques literalmente, sin reescribirlo.
+
+## Los dos defectos que el archivo nuevo corrige
+
+Te los explico para que entiendas por qué está escrito así y **no intentes
+"mejorarlo" deshaciéndolos**:
+
+1. **Publicaba en el repositorio equivocado.** El workflow actual usa
+   `gh release create` con el `GITHUB_TOKEN` por defecto. Ese token solo
+   tiene permisos sobre este repositorio, así que las releases acababan en
+   `pipe9494/viewifi_linux`. Pero la web enlaza a
+   `pipe9494/viewifi-releases`, que es otro repositorio, y además este va a
+   pasar a ser privado. El archivo nuevo sube a `viewifi-releases` usando un
+   secret llamado `RELEASES_TOKEN`.
+
+2. **Compilaba contra una glibc demasiado nueva.** Compilaba sobre
+   `ubuntu-latest`, que trae glibc 2.39. Un binario así falla con
+   `GLIBC_2.38 not found` en Raspberry Pi OS bookworm y en Debian 12, que es
+   justo donde tiene que correr. El archivo nuevo compila dentro de un
+   contenedor `debian:bullseye` (glibc 2.31). Compilar contra una glibc
+   antigua y ejecutar sobre las nuevas funciona; al revés no.
+
+## Reglas
+
+- Aplica el contenido **exactamente** como te lo doy. No cambies la imagen
+  del contenedor, ni los runners, ni los nombres de los archivos generados,
+  ni el repositorio de destino, ni el `--clobber`, ni los comentarios.
+- No modifiques ningún otro archivo. En concreto, no toques el código de
+  `viewifi/`, ni `run.py`, ni `install.sh`, ni `.github/workflows/test.yml`.
+- No añadas dependencias al proyecto: el host tiene que seguir usando solo
+  la biblioteca estándar de Python.
+- No subas la versión ni crees tags.
+- **No intentes crear el secret `RELEASES_TOKEN`.** Un agente no puede crear
+  secrets; eso lo hago yo a mano. Limítate a mencionarlo en la descripción
+  del pull request como paso pendiente por mi parte.
+- Si el linter de Actions se queja de `ubuntu-24.04-arm`, ignóralo: ese
+  runner existe y es el correcto.
+
+## Descripción del pull request
+
+Incluye en ella, además del resumen del cambio, estos dos pasos manuales
+que quedan de mi lado:
+
+1. Crear un Personal Access Token con permiso de escritura sobre
+   `pipe9494/viewifi-releases` y guardarlo en este repositorio como secret
+   `RELEASES_TOKEN`, en Settings → Secrets and variables → Actions.
+2. Lanzar el workflow a mano desde la pestaña Actions (`workflow_dispatch`)
+   con el tag `v1.0.0`, que es la release donde ya está publicada la imagen
+   del kit y donde tienen que convivir todos los adjuntos.
+
+## Contenido exacto de `.github/workflows/release.yml`
+
+```yaml
 name: release
 
 # Compila el host de Linux para x86_64 y ARM64 y sube los dos ejecutables
@@ -48,17 +122,11 @@ jobs:
     steps:
       - name: Preparar el contenedor
         run: |
-          rm -f /etc/apt/sources.list.d/*
-          printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20240701T000000Z bullseye main\n' > /etc/apt/sources.list
-          printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid
           apt-get update
-          apt-get install -y --allow-downgrades --no-install-recommends \
-            python3 python3-pip libpython3.9 binutils curl ca-certificates
+          apt-get install -y --no-install-recommends \
+            python3 python3-pip python3-dev binutils curl ca-certificates git
 
-      - name: Descargar el código
-        run: |
-          curl -fsSL "https://github.com/${{ github.repository }}/archive/${{ github.sha }}.tar.gz" \
-            | tar -xz --strip-components=1
+      - uses: actions/checkout@v4
 
       - name: Compilar el ejecutable
         run: |
@@ -117,3 +185,4 @@ jobs:
           gh release upload "$TAG" viewifi-host-linux-* \
             --clobber --repo pipe9494/viewifi-releases
           echo "Subidos a la release $TAG de pipe9494/viewifi-releases."
+```
