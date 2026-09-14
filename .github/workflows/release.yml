@@ -48,6 +48,7 @@ jobs:
     steps:
       - name: Preparar el contenedor
         run: |
+          rm -f /etc/apt/sources.list.d/*
           printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20240701T000000Z bullseye main\n' > /etc/apt/sources.list
           printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid
           apt-get update
