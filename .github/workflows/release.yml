@@ -52,7 +52,7 @@ jobs:
           printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20240701T000000Z bullseye main\n' > /etc/apt/sources.list
           printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99no-check-valid
           apt-get update
-          apt-get install -y --no-install-recommends \
+          apt-get install -y --allow-downgrades --no-install-recommends \
             python3 python3-pip python3-dev binutils curl ca-certificates git
 
       - uses: actions/checkout@v4
